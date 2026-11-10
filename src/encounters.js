@@ -12,11 +12,17 @@ const SPAWNS = [
   ['tank', 'runner', 'slime', 'gunner', 'runner', 'slime'],
 ];
 const COLORS = { danger: 0xff547a, flame: 0xff9462, amber: 0xffce6c, ice: 0x8af6dd };
+const COACH_CENTERS = [[147, 268], [333, 268], [147, 514], [333, 514]];
+const COACH_PACK = [[-26, -10], [0, -21], [26, -10], [-16, 17], [15, 19]];
 
 function clamp(n, lo, hi) { return Math.min(hi, Math.max(lo, n)); }
 function clampX(x, r = 0) { return clamp(x, BOUNDS.left + r, BOUNDS.right - r); }
 function clampY(y, r = 0) { return clamp(y, BOUNDS.top + r, BOUNDS.bottom - r); }
 function dist2(x1, y1, x2, y2) { return (x1 - x2) ** 2 + (y1 - y2) ** 2; }
+function safeToSpawn(run, x, y, headGap, carGap) {
+  if (dist2(x, y, run.train.x, run.train.y) < headGap * headGap) return false;
+  return run.train.cars.every(car => dist2(x, y, car.x, car.y) >= carGap * carGap);
+}
 
 function segmentDist2(x, y, x0, y0, x1, y1) {
   const dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy;
@@ -27,7 +33,13 @@ function segmentDist2(x, y, x0, y0, x1, y1) {
 export function createDirector() {
   return {
     seeded: false,
+    coach: { stage: 'first', firstShotAt: null, retryAt: 0, center: null, ids: [], before: 0, until: 0 },
     supplyIndex: 0,
+    nextSupplyAt: null,
+    announcedSupply: -1,
+    showcase: null,
+    demoHint: '',
+    demoHintUntil: 0,
     nextWaveAt: 7,
     nextStrikeAt: null,
     nextTailAt: 0,
@@ -40,7 +52,7 @@ export function createDirector() {
     charge: null,
     pool: Array.from({ length: 28 }, () => ({
       active: false, kind: '', x: 0, y: 0, x0: 0, y0: 0, x1: 0, y1: 0,
-      r: 0, ttl: 0, life: 0, vx: 0, vy: 0, damage: 0, dashed: false, owner: null, ownerId: 0,
+      r: 0, ttl: 0, life: 0, vx: 0, vy: 0, damage: 0, dashed: false, owner: null, ownerId: 0, targetId: null,
     })),
   };
 }
@@ -56,6 +68,7 @@ function hazard(run, kind, life, data) {
   h.dashed = false;
   h.owner = null;
   h.ownerId = 0;
+  h.targetId = null;
   Object.assign(h, data);
   run.hazards.push(h);
   return h;
@@ -78,10 +91,109 @@ function spawnTeachingPack(run) {
   }
 }
 
+function coachPackAlreadyCovered(run, x, y) {
+  // Conservative check against the two early side guns' existing poses.
+  // The new pack should ask for a new turn, even when the volley is recharging.
+  return COACH_PACK.some(([dx, dy]) => {
+    let count = 0;
+    for (const car of run.train.cars) {
+      const vx = x + dx - car.x, vy = y + dy - car.y;
+      const range = 180 + car.level * 5;
+      const offset = Math.atan2(vy, vx) - car.heading;
+      const facing = car.type === 'side' ? Math.abs(Math.sin(offset))
+        : car.type === 'rear' ? -Math.cos(offset) : Math.cos(offset);
+      if (vx * vx + vy * vy <= range * range && facing > 0.86 && ++count >= 2) return true;
+    }
+    return false;
+  });
+}
+
+function openCoachCurve(run) {
+  const coach = run.director.coach;
+  let center = null, score = -Infinity;
+  for (const [x, y] of COACH_CENTERS) {
+    if (!safeToSpawn(run, x, y, 166, 130) || coachPackAlreadyCovered(run, x, y)) continue;
+    let separation = dist2(x, y, run.train.x, run.train.y);
+    for (const car of run.train.cars) separation = Math.min(separation, dist2(x, y, car.x, car.y));
+    let traffic = 0;
+    for (const e of run.enemies) if (e.hp > 0 && dist2(x, y, e.x, e.y) < 58 ** 2) traffic++;
+    const value = separation - traffic * 3600;
+    if (value > score) {
+      center = { x, y };
+      score = value;
+    }
+  }
+  if (!center) return false;
+  const { x, y } = center;
+  const train = run.train;
+  const entry = Math.atan2(train.y - y, train.x - x);
+  const radius = 106;
+  const route = [{ x: train.x, y: train.y }];
+  for (let i = 0; i <= 17; i++) {
+    const a = entry + i * 0.124;
+    route.push({ x: x + Math.cos(a) * radius, y: y + Math.sin(a) * radius });
+  }
+  coach.stage = 'curve';
+  coach.center = center;
+  coach.before = run.stats.crossfires;
+  coach.until = Math.min(20.6, run.time + 8.5);
+  for (const [dx, dy] of COACH_PACK) {
+    const enemy = run.spawnEnemy('slime', x + dx, y + dy, {
+      hp: 30, introUntil: coach.until, attackCd: 0, coach: true,
+    });
+    if (enemy) coach.ids.push(enemy.id);
+  }
+  run.guide = route;
+  run.message = '新弯道 · 自己摆出下一次夹击';
+  run.effect(x, y, 'spawn', COLORS.ice, 42, 0.65);
+  return true;
+}
+
+function coachOpening(run) {
+  const coach = run.director.coach;
+  if (coach.stage === 'done') return;
+  if (coach.firstShotAt == null && run.stats.volleys > 0) {
+    coach.firstShotAt = run.time;
+    if (coach.stage === 'first') {
+      run.guide.length = 0;
+      run.hint = '初次齐射完成 · 继续移动，找下一个弯道';
+    }
+  }
+  if (coach.stage === 'first') {
+    const readyAt = coach.firstShotAt == null ? 11.6 : clamp(coach.firstShotAt + 5.4, 8.5, 13.1);
+    if (run.time >= 15.6 || run.train.cars.length < 2) {
+      coach.stage = 'done';
+      run.guide.length = 0;
+      run.hint = '沿怪群外侧转弯，等交叉标记再齐射';
+    } else if (run.time >= readyAt && run.time >= coach.retryAt) {
+      coach.retryAt = run.time + 0.4;
+      openCoachCurve(run);
+    }
+    return;
+  }
+  const success = run.stats.crossfires > coach.before;
+  const alive = run.enemies.some(e => e.hp > 0 && coach.ids.includes(e.id));
+  if (success || !alive || run.time >= coach.until || run.train.cars.length < 2) {
+    coach.stage = 'done';
+    run.guide.length = 0;
+    for (const e of run.enemies) if (e.coach) e.introUntil = 0;
+    run.hint = success ? '已学会弯道夹击 · 来敌方向变了，换一条走线'
+      : '沿怪群外侧转弯，等交叉标记再齐射';
+    if (success) run.message = '弯道练成 · 用这招打下一波';
+  } else {
+    run.hint = coach.ids.includes(run.volley.mark?.id)
+      ? '两门炮已经交叉 · 现在按齐射'
+      : run.volley.charge < 1
+        ? '驶进新弯道摆好炮口 · 齐射正在充能'
+        : '沿青线开过弯道 · 等双环亮起再齐射';
+  }
+}
+
 function edgeSpawn(run, kind, edge, elite = false, tailHunter = false) {
   const rand = () => run.random();
   let x = 0, y = 0;
   const tail = tailHunter && run.mode === 'full' ? run.train.cars.at(-1) : null;
+  let safe = false;
   for (let i = 0; i < 6; i++) {
     const side = (edge + (i > 1 ? i - 1 : 0)) % 4;
     if (side === 0 || side === 2) {
@@ -91,10 +203,13 @@ function edgeSpawn(run, kind, edge, elite = false, tailHunter = false) {
       x = side === 1 ? BOUNDS.right - 22 : BOUNDS.left + 22;
       y = 168 + rand() * 452;
     }
-    if (dist2(x, y, run.train.x, run.train.y) >= 117 ** 2 &&
-        (!tail || dist2(x, y, tail.x, tail.y) >= 102 ** 2)) break;
+    if (safeToSpawn(run, x, y, 117, 64) &&
+        (!tail || dist2(x, y, tail.x, tail.y) >= 102 ** 2)) {
+      safe = true;
+      break;
+    }
   }
-  if (tail && dist2(x, y, tail.x, tail.y) < 94 ** 2) return null;
+  if (!safe) return null;
   const stage = run.stage;
   const hp = kind === 'tank' ? 72 + stage * 8
     : kind === 'gunner' ? 35 + stage * 4
@@ -108,17 +223,95 @@ function edgeSpawn(run, kind, edge, elite = false, tailHunter = false) {
   return enemy;
 }
 
+function showcaseSupply(run) {
+  const d = run.director, demo = d.showcase;
+  if (!demo || run.time < demo.at) return;
+  if (run.time > demo.until) {
+    d.showcase = null;
+    return;
+  }
+  const changed = run.train.cars.find(car => !demo.oldCars.some(old => old.id === car.id && old.level === car.level));
+  if (!changed) {
+    d.showcase = null; // Repairs have their own effect at the supply point.
+    return;
+  }
+  if (!demo.hinted) {
+    demo.hinted = true;
+    const hint = changed.type === 'front' ? '前炮已就绪 · 把车头方向对准拦路的敌人'
+      : changed.type === 'rear' ? '尾炮已就绪 · 让追兵留在车后，命中会减慢它们'
+        : '侧炮已就绪 · 转弯让侧炮对准怪群';
+    run.hint = hint;
+    d.demoHint = hint;
+    d.demoHintUntil = run.time + 4.8;
+  }
+  const directions = changed.type === 'rear' ? [changed.heading + Math.PI]
+    : changed.type === 'front' ? [changed.heading]
+      : [changed.heading - Math.PI / 2, changed.heading + Math.PI / 2];
+  let live = 0;
+  for (const e of run.enemies) if (e.hp > 0) live++;
+  if (live >= 16) {
+    d.showcase = null;
+    return;
+  }
+  demo.at = run.time + 0.3;
+  for (const direction of directions) for (const spread of [0, -0.31, 0.31]) {
+    const angle = direction + spread;
+    const dx = Math.cos(angle), dy = Math.sin(angle);
+    const reach = changed.type === 'front' ? 178 : 143;
+    const x = changed.x + dx * reach, y = changed.y + dy * reach;
+    if (x < BOUNDS.left + 24 || x > BOUNDS.right - 24 ||
+        y < BOUNDS.top + 24 || y > BOUNDS.bottom - 24 ||
+        !safeToSpawn(run, x, y, 112, 90)) continue;
+    let sent = false;
+    for (const side of [-1, 1]) {
+      const px = x - dy * 15 * side, py = y + dx * 15 * side;
+      if (!safeToSpawn(run, px, py, 104, 82)) continue;
+      const enemy = run.spawnEnemy(changed.type === 'rear' ? 'runner' : 'slime', px, py, {
+        hp: 29, introUntil: run.time + 0.75, spawnGrace: 0.38, tailHunter: false,
+      });
+      if (enemy) {
+        sent = true;
+        run.effect(px, py, 'spawn', COLORS.danger, enemy.r + 10, 0.44);
+      }
+    }
+    if (sent) {
+      d.showcase = null;
+      return;
+    }
+  }
+}
+
 function schedule(run) {
   const d = run.director;
   const quick = run.mode === 'quick';
   const bossAt = quick ? 65 : 240;
   const supply = SUPPLIES[quick ? 'quick' : 'full'][d.supplyIndex];
+  d.nextSupplyAt = supply?.[0] ?? null;
+  if (d.demoHintUntil && run.time >= d.demoHintUntil) {
+    if (run.hint === d.demoHint) run.hint = '沿怪群外侧转弯，等交叉标记再齐射';
+    d.demoHintUntil = 0;
+  }
+  if (supply && run.time >= supply[0] - 3.3 && run.time < supply[0]) {
+    if (d.announcedSupply !== d.supplyIndex) {
+      d.announcedSupply = d.supplyIndex;
+      run.message = '补给即将到达 · 第 ' + (d.supplyIndex + 1) + ' 次整备';
+    }
+    d.nextWaveAt = Math.max(d.nextWaveAt, supply[0] + 2.6);
+  }
   if (supply && run.time >= supply[0]) {
+    d.showcase = {
+      at: run.time + 1.35,
+      until: run.time + 3.1,
+      oldCars: run.train.cars.map(car => ({ id: car.id, level: car.level })),
+    };
     d.supplyIndex++;
     run.stage = d.supplyIndex + 1;
+    d.nextSupplyAt = SUPPLIES[quick ? 'quick' : 'full'][d.supplyIndex]?.[0] ?? null;
+    d.nextWaveAt = Math.max(d.nextWaveAt, run.time + 2.6);
     run.openSupply(supply[1]);
     if (run.phase !== 'playing') return;
   }
+  showcaseSupply(run);
   if (!d.boss && run.time >= bossAt) {
     spawnBoss(run, quick);
     return;
@@ -133,7 +326,8 @@ function schedule(run) {
     if (count < cap) {
       // Early pressure moves from the front to the flank, then introduces
       // tail hunters and aimed fire in separate waves.
-      const pattern = d.boss ? ['slime', 'runner', 'slime'] : SPAWNS[Math.min(4, run.stage - 1)];
+      const pattern = d.boss ? ['slime', 'runner', 'slime']
+        : d.wave <= 2 ? SPAWNS[0].slice(0, 2) : SPAWNS[Math.min(4, run.stage - 1)];
       let tailAllowed = !quick && run.train.cars.length > 0 && d.nextTailAt <= run.time &&
         (!d.boss || d.wave % 2 === 0) &&
         !run.enemies.some(e => e.hp > 0 && e.tailHunter);
@@ -162,7 +356,7 @@ function schedule(run) {
   if (!d.boss && run.time >= strikeAt) {
     d.nextStrikeAt = run.time + (quick ? 80 : 15);
     hazard(run, 'strike', 1.22, {
-      x: run.train.x, y: run.train.y, r: 43, damage: quick ? 12 : 16,
+      x: run.train.x, y: run.train.y, r: 43, damage: quick ? 12 : 16, targetId: run.train.id,
     });
     run.hint = '危险圈会延迟落地，带着尾车一起离开';
   }
@@ -206,8 +400,14 @@ function updateHazards(run, dt) {
 }
 
 function spawnBoss(run, quick) {
-  const x = run.train.x < 240 ? 337 : 143;
-  const y = run.train.y > 382 ? 216 : 574;
+  let x = run.train.x < 240 ? 337 : 143;
+  let y = run.train.y > 382 ? 216 : 574;
+  if (!safeToSpawn(run, x, y, 128, 85)) {
+    const alternate = [[143, 216], [337, 216], [143, 574], [337, 574]]
+      .find(([px, py]) => safeToSpawn(run, px, py, 128, 85));
+    if (!alternate) return;
+    [x, y] = alternate;
+  }
   const boss = run.spawnEnemy('boss', x, y, {
     hp: quick ? 295 : 575,
     r: 30, state: 'stalk', stateT: 2.25, damageScale: 0.22,
@@ -328,6 +528,7 @@ function updateBoss(run, dt) {
       }
       if (broken >= 2 && run.time <= d.dualUntil) {
         boss.stateT += 1.15;
+        run.stats.dualBreaks = (run.stats.dualBreaks ?? 0) + 1;
         run.message = '双核击破 · 输出窗口延长';
         run.effect(boss.x, boss.y, 'dualBreak', COLORS.amber, 61, 0.55);
       }
@@ -364,7 +565,7 @@ function updateGunner(run, enemy, dt, dist) {
     enemy.attackCd = 0.68;
     hazard(run, 'aim', 0.68, {
       x0: enemy.x, y0: enemy.y, x1: run.train.x, y1: run.train.y,
-      r: 2, owner: enemy, ownerId: enemy.id,
+      r: 2, owner: enemy, ownerId: enemy.id, targetId: run.train.id,
     });
     return true;
   }
@@ -392,7 +593,7 @@ function updateTailHunter(run, enemy, tail, dist) {
   enemy.biteAt = run.time + 0.64;
   const warning = hazard(run, 'aim', 0.64, {
     x0: enemy.x, y0: enemy.y, x1: tail.x, y1: tail.y,
-    r: 5, owner: enemy, ownerId: enemy.id,
+    r: 5, owner: enemy, ownerId: enemy.id, targetId: tail.id,
   });
   if (!warning) {
     enemy.state = 'walk';
@@ -425,7 +626,8 @@ function updateEnemies(run, dt) {
     if (enemy.kind === 'gunner' && updateGunner(run, enemy, dt, dist)) continue;
     const baseSpeed = enemy.kind === 'runner' ? 91 : enemy.kind === 'tank' ? 34 :
       enemy.kind === 'gunner' ? (dist < 102 ? -42 : dist < 183 ? 0 : 43) : 44 + run.stage * 1.4;
-    const speed = baseSpeed * (enemy.elite ? 1.05 : 1) * (enemy.spawnGrace > 0 ? 0.44 : 1);
+    const slow = enemy.slowT > 0 ? (enemy.slowScale ?? 0.68) : 1;
+    const speed = baseSpeed * slow * (enemy.elite ? 1.05 : 1) * (enemy.spawnGrace > 0 ? 0.44 : 1);
     let pushX = 0, pushY = 0;
     for (const other of run.enemies) {
       if (other === enemy || other.hp <= 0 || other.kind === 'weakpoint') continue;
@@ -451,10 +653,7 @@ export function updateEncounter(run, dt) {
   if (run.phase !== 'playing') return;
   const d = run.director;
   if (!d.seeded) spawnTeachingPack(run);
-  if (run.hint.startsWith('沿浅青弧线') && (run.stats.crossfires > 0 || run.time > 19)) {
-    run.guide.length = 0;
-    run.hint = '拐弯布炮 · 留住齐射，等到两道火线交汇';
-  }
+  coachOpening(run);
   schedule(run);
   if (run.phase !== 'playing') return;
   updateHazards(run, dt);

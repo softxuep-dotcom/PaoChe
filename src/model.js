@@ -5,9 +5,20 @@ export const HEIGHT = 800;
 export const ARENA = Object.freeze({ left: 30, right: 450, top: 132, bottom: 658 });
 
 export const GUNS = Object.freeze({
-  side: Object.freeze({ name: '弧光侧炮', color: 0x72f4e0, range: 172, half: 0.48, angles: [-Math.PI / 2, Math.PI / 2], damage: 10, volley: 34, period: 0.94 }),
-  front: Object.freeze({ name: '穿岩前炮', color: 0xffc064, range: 209, half: 0.48, angles: [0], damage: 18, volley: 55, period: 1.20 }),
-  rear: Object.freeze({ name: '霜火尾炮', color: 0xadadff, range: 179, half: 0.61, angles: [Math.PI], damage: 13, volley: 40, period: 0.87 }),
+  side: Object.freeze({
+    name: '弧光侧炮', role: '两侧夹击', effect: '向两侧寻找目标，转弯时容易形成交叉火力。',
+    color: 0x72f4e0, range: 172, half: 0.48, angles: [-Math.PI / 2, Math.PI / 2], damage: 10, volley: 34, period: 0.94,
+  }),
+  front: Object.freeze({
+    name: '穿岩前炮', role: '正面破甲', effect: '对重甲怪伤害 +35%，对带护甲的守卫伤害 +70%。',
+    color: 0xffc064, range: 209, half: 0.48, angles: [0], damage: 18, volley: 55, period: 1.20,
+    tankMult: 1.35, guardedBossMult: 1.7,
+  }),
+  rear: Object.freeze({
+    name: '霜火尾炮', role: '拖慢追兵', effect: '命中普通敌人减速 32%，齐射减速持续更久。',
+    color: 0xadadff, range: 179, half: 0.61, angles: [Math.PI], damage: 13, volley: 40, period: 0.87,
+    slowScale: 0.68, slowTime: 0.72, volleySlowTime: 1.15,
+  }),
 });
 
 const ENEMY = Object.freeze({
@@ -33,6 +44,18 @@ const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
 const angleDelta = (to, from) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
 const distance2 = (ax, ay, bx, by) => (ax - bx) ** 2 + (ay - by) ** 2;
 const exposedBoss = e => e.kind === 'boss' && e.damageScale >= 1;
+const levelDamage = (base, level) => base * (1 + (level - 1) * 0.57);
+const displayDamage = damage => Math.round(damage * 10) / 10;
+
+function gunPreview(type, level) {
+  const gun = GUNS[type];
+  return {
+    type, name: gun.name, role: gun.role, effect: gun.effect, level,
+    damage: displayDamage(levelDamage(gun.damage, level)),
+    volley: displayDamage(levelDamage(gun.volley, level)),
+    cost: 1,
+  };
+}
 
 class TimedPool {
   constructor(capacity) {
@@ -148,6 +171,7 @@ class Trail {
 export class Run {
   constructor({ seed = 0x4d592a83 } = {}) {
     this.seed = seed >>> 0;
+    this.noticeId = 0;
     this.trail = new Trail();
     this.aimPool = Array.from({ length: MAX_CARS * 2 }, () => ({}));
     this.autoAim = {};
@@ -164,6 +188,13 @@ export class Run {
     this.reset('full', 'menu');
   }
 
+  get message() { return this._message; }
+
+  set message(text) {
+    this._message = text;
+    this.noticeId++;
+  }
+
   reset(mode, phase) {
     this.mode = mode === 'quick' ? 'quick' : 'full';
     this.phase = phase;
@@ -174,10 +205,13 @@ export class Run {
     this.message = '';
     this.hint = '沿着弧线开车，让两门炮对准同一群怪。';
     this.supply = null;
-    this.supplyTarget = null;
     this.nextId = 1;
     this.rngState = this.seed || 1;
-    this.stats = { kills: 0, volleys: 0, crossfires: 0, recovered: 0, maxCars: 2 };
+    this.stats = {
+      kills: 0, volleys: 0, crossfires: 0, recovered: 0, maxCars: 2,
+      damageByType: { head: 0, side: 0, front: 0, rear: 0, crossfire: 0 },
+      dualBreaks: 0, bestVolleyKills: 0, lastVolleyKills: 0,
+    };
     this.enemies = [];
     this.freeEnemies.length = 0;
     for (const e of this.enemyPool) this.freeEnemies.push(e);
@@ -282,16 +316,24 @@ export class Run {
     const hp = options.hp ?? options.maxHp ?? defaults.hp;
     Object.assign(entity, defaults, options, {
       id: this.nextId++, kind, x, y, hp, maxHp: options.maxHp ?? hp,
-      heading: options.heading ?? 0, hitT: 0, pooled: !weakpoint && !boss,
+      heading: options.heading ?? 0, hitT: 0, slowT: 0, slowScale: 1, pooled: !weakpoint && !boss,
     });
     this.enemies.push(entity);
     return entity;
   }
 
-  damageEnemy(enemy, amount) {
+  damageEnemy(enemy, amount, source = null) {
     if (!enemy || enemy.hp <= 0 || !(amount > 0)) return false;
-    const multiplier = enemy.damageScale ?? (enemy.shield ? 0.13 : 1);
-    enemy.hp = Math.max(0, enemy.hp - amount * multiplier);
+    let multiplier = enemy.damageScale ?? (enemy.shield ? 0.13 : 1);
+    if (source === 'front') {
+      if (enemy.kind === 'tank') multiplier *= GUNS.front.tankMult;
+      if (enemy.kind === 'boss' && multiplier < 1) {
+        multiplier = Math.min(1, multiplier * GUNS.front.guardedBossMult);
+      }
+    }
+    const damage = Math.max(0, Math.min(enemy.hp, amount * multiplier));
+    enemy.hp -= damage;
+    if (Object.hasOwn(this.stats.damageByType, source)) this.stats.damageByType[source] += damage;
     enemy.hitT = 0.14;
     if (enemy.hp > 0) return false;
     if (enemy.kind === 'boss') {
@@ -369,7 +411,7 @@ export class Run {
     fx.ttl = fx.life = life;
   }
 
-  shoot(x0, y0, enemy, color, damage, kind) {
+  shoot(x0, y0, enemy, color, damage, kind, source = 'head') {
     const life = kind === 'auto' ? 0.15 : 0.37;
     const shot = this.shotPool.acquire();
     shot.x0 = x0;
@@ -380,8 +422,17 @@ export class Run {
     shot.ttl = shot.life = life;
     shot.width = kind === 'auto' ? 2.5 : 6;
     shot.kind = kind;
+    shot.source = source;
     if (kind !== 'auto') this.effect(enemy.x, enemy.y, 'hit', color, 19, 0.32);
-    this.damageEnemy(enemy, damage);
+    const before = enemy.hp;
+    this.damageEnemy(enemy, damage, source);
+    if (source === 'rear' && enemy.hp > 0 && enemy.hp < before &&
+        enemy.kind !== 'boss' && enemy.kind !== 'weakpoint') {
+      const gun = GUNS.rear;
+      const duration = kind === 'volley' ? gun.volleySlowTime : gun.slowTime;
+      enemy.slowT = Math.max(enemy.slowT ?? 0, duration);
+      enemy.slowScale = gun.slowScale;
+    }
   }
 
   aimAt(car, gun, offset, slot) {
@@ -487,10 +538,11 @@ export class Run {
     this.volley.charge = 0;
     this.volley.aim.length = 0;
     this.volley.mark = null;
+    const killsBefore = this.stats.kills;
     this.stats.volleys++;
     for (const { car, target } of this.volleyPlan) {
       const gun = GUNS[car.type];
-      this.shoot(car.x, car.y, target, gun.color, gun.volley * (1 + (car.level - 1) * 0.57), 'volley');
+      this.shoot(car.x, car.y, target, gun.color, levelDamage(gun.volley, car.level), 'volley', car.type);
     }
     if (head) this.shoot(this.train.x, this.train.y, head, GOLD, 17, 'volley');
     if (mark) {
@@ -502,13 +554,15 @@ export class Run {
       for (const e of this.enemies) {
         if (e.hp <= 0 || e.kind === 'weakpoint') continue;
         if (distance2(markedX, markedY, e.x, e.y) <= (57 + e.r) ** 2) {
-          this.damageEnemy(e, e === mark ? 46 : 32);
+          this.damageEnemy(e, e === mark ? 46 : 32, 'crossfire');
           if (e.hp > 0 && e.kind !== 'boss') e.stunT = Math.max(e.stunT ?? 0, 0.45);
         }
       }
     } else {
       this.message = '全列齐射！';
     }
+    this.stats.lastVolleyKills = this.stats.kills - killsBefore;
+    this.stats.bestVolleyKills = Math.max(this.stats.bestVolleyKills, this.stats.lastVolleyKills);
     return true;
   }
 
@@ -554,7 +608,7 @@ export class Run {
       }
       if (target) {
         car.fireCd = gun.period;
-        this.shoot(car.x, car.y, target, gun.color, gun.damage * (1 + (car.level - 1) * 0.57), 'auto');
+        this.shoot(car.x, car.y, target, gun.color, levelDamage(gun.damage, car.level), 'auto', car.type);
       } else car.fireCd = 0;
     }
   }
@@ -564,10 +618,20 @@ export class Run {
     const gunType = GUNS[type] ? type : 'front';
     const cars = this.train.cars;
     const gun = GUNS[gunType];
-    let merge = cars.find(car => car.type === gunType && car.level < MAX_LEVEL);
-    if (!merge) merge = cars.find(car => car.level < MAX_LEVEL);
+    const targets = cars.flatMap((car, index) => {
+      if (car.level >= MAX_LEVEL) return [];
+      const before = gunPreview(car.type, car.level);
+      const after = gunPreview(car.type, car.level + 1);
+      return [{
+        id: car.id, type: car.type, label: '第 ' + (index + 1) + ' 节 · ' + before.name,
+        role: before.role, effect: before.effect, level: before.level, nextLevel: after.level,
+        damage: before.damage, nextDamage: after.damage, volley: before.volley, nextVolley: after.volley,
+      }];
+    });
+    const merge = targets.find(target => target.type === gunType) ?? targets[0];
     const options = [{
       id: 'attach', type: gunType,
+      preview: gunPreview(gunType, 1),
       label: cars.length < MAX_CARS ? '接入' + gun.name : '换装' + gun.name,
       description: cars.length < MAX_CARS
         ? '增加一节炮车，拓宽射界。'
@@ -575,13 +639,19 @@ export class Run {
     }];
     if (merge) options.push({
       id: 'merge', type: merge.type, label: '合并强化',
-      description: GUNS[merge.type].name + '升至 ' + (merge.level + 1) + ' 级，伤害提高。',
+      description: '选一节炮车升级，增加单发与齐射伤害。',
+      preview: gunPreview(merge.type, merge.nextLevel),
+      defaultTargetId: merge.id, targets,
     });
     options.push({
       id: 'repair', type: 'repair', label: '战地维修',
       description: '恢复 32 点车头生命，修满车节，齐射立即就绪。',
+      preview: {
+        type: 'repair', name: '战地维修', role: '恢复车队',
+        effect: '车头恢复 32 点生命，炮车修满，齐射充满。',
+        damage: 0, volley: 0, cost: 1, heal: 32,
+      },
     });
-    this.supplyTarget = { type: gunType, merge };
     this.supply = {
       title: '战地补给',
       description: '每次补给至少恢复 18 点车头生命和一格炮车耐久。',
@@ -593,29 +663,40 @@ export class Run {
     return true;
   }
 
-  choose(id) {
-    if (this.phase !== 'supply' || !this.supply.options.some(option => option.id === id)) return false;
+  choose(id, targetId) {
+    if (this.phase !== 'supply') return false;
+    const option = this.supply.options.find(item => item.id === id);
+    if (!option) return false;
     const train = this.train;
+    let merge;
+    if (id === 'merge') {
+      const id = Number(targetId ?? option.defaultTargetId);
+      if (!option.targets.some(target => target.id === id)) return false;
+      merge = train.cars.find(car => car.id === id && car.level < MAX_LEVEL);
+      if (!merge) return false;
+    }
     train.hp = Math.min(train.maxHp, train.hp + (id === 'repair' ? 32 : 18));
     for (const car of train.cars) {
+      if (id === 'repair' && car.hp < car.maxHp) this.effect(car.x, car.y, 'repair', 0x80ffe1, 26, 0.65);
       car.hp = id === 'repair' ? car.maxHp : Math.min(car.maxHp, car.hp + 1);
     }
     if (id === 'attach') {
       if (train.cars.length === MAX_CARS) train.cars.pop();
-      train.cars.push(this.newCar(this.supplyTarget.type));
+      const car = this.newCar(option.type);
+      train.cars.push(car);
       this.stats.maxCars = Math.max(this.stats.maxCars, train.cars.length);
-      this.message = GUNS[this.supplyTarget.type].name + '已接入';
+      this.message = GUNS[car.type].name + '已接入';
       this.placeCars();
+      this.effect(car.x, car.y, 'attach', GUNS[car.type].color, 43, 0.78);
     } else if (id === 'merge') {
-      const car = this.supplyTarget.merge;
-      car.level++;
-      this.message = GUNS[car.type].name + '已强化';
+      merge.level++;
+      this.message = GUNS[merge.type].name + '已强化';
+      this.effect(merge.x, merge.y, 'merge', GUNS[merge.type].color, 40, 0.78);
     } else {
       this.volley.charge = 1;
       this.message = '维修完毕，齐射就绪';
+      this.effect(train.x, train.y, 'repair', 0x80ffe1, 46, 0.65);
     }
-    this.effect(train.x, train.y, 'supply', GOLD, 46, 0.55);
-    this.supplyTarget = null;
     this.supply = null;
     this.phase = 'playing';
     this.prepareVolley();
@@ -640,6 +721,10 @@ export class Run {
     for (const e of this.enemies) {
       e.hitT = Math.max(0, e.hitT - dt);
       if (e.stunT > 0) e.stunT = Math.max(0, e.stunT - dt);
+      if (e.slowT > 0) {
+        e.slowT = Math.max(0, e.slowT - dt);
+        if (e.slowT === 0) e.slowScale = 1;
+      }
     }
     this.volley.charge = Math.min(1, this.volley.charge + dt / VOLLEY_TIME);
     updateEncounter(this, dt);

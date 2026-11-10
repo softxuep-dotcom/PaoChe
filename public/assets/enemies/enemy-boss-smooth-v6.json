@@ -1,0 +1,175 @@
+{
+  "frames": {
+    "boss_left_1": {
+      "frame": {
+        "x": 2,
+        "y": 2,
+        "w": 192,
+        "h": 192
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 192,
+        "h": 192
+      },
+      "sourceSize": {
+        "w": 192,
+        "h": 192
+      }
+    },
+    "boss_left_2": {
+      "frame": {
+        "x": 196,
+        "y": 2,
+        "w": 192,
+        "h": 192
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 192,
+        "h": 192
+      },
+      "sourceSize": {
+        "w": 192,
+        "h": 192
+      }
+    },
+    "boss_left_3": {
+      "frame": {
+        "x": 390,
+        "y": 2,
+        "w": 192,
+        "h": 192
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 192,
+        "h": 192
+      },
+      "sourceSize": {
+        "w": 192,
+        "h": 192
+      }
+    },
+    "boss_left_4": {
+      "frame": {
+        "x": 584,
+        "y": 2,
+        "w": 192,
+        "h": 192
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 192,
+        "h": 192
+      },
+      "sourceSize": {
+        "w": 192,
+        "h": 192
+      }
+    },
+    "boss_left_5": {
+      "frame": {
+        "x": 778,
+        "y": 2,
+        "w": 192,
+        "h": 192
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 192,
+        "h": 192
+      },
+      "sourceSize": {
+        "w": 192,
+        "h": 192
+      }
+    },
+    "boss_left_6": {
+      "frame": {
+        "x": 972,
+        "y": 2,
+        "w": 192,
+        "h": 192
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 192,
+        "h": 192
+      },
+      "sourceSize": {
+        "w": 192,
+        "h": 192
+      }
+    },
+    "boss_left_7": {
+      "frame": {
+        "x": 1166,
+        "y": 2,
+        "w": 192,
+        "h": 192
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 192,
+        "h": 192
+      },
+      "sourceSize": {
+        "w": 192,
+        "h": 192
+      }
+    },
+    "boss_left_8": {
+      "frame": {
+        "x": 1360,
+        "y": 2,
+        "w": 192,
+        "h": 192
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 192,
+        "h": 192
+      },
+      "sourceSize": {
+        "w": 192,
+        "h": 192
+      }
+    }
+  },
+  "meta": {
+    "app": "Horde Breaker sprite grid packer",
+    "version": "1.0",
+    "image": "enemy-boss-smooth-v6.webp",
+    "format": "RGBA8888",
+    "size": {
+      "w": 1554,
+      "h": 196
+    },
+    "scale": "1"
+  }
+}

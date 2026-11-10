@@ -75,6 +75,22 @@ export class Sounds {
         this.tone(330, 440, .15, .055, 'triangle');
         this.tone(495, 660, .17, .055, 'triangle', .08);
         break;
+      case 'ready':
+        this.tone(524, 660, .08, .035, 'sine');
+        this.tone(784, 880, .11, .045, 'triangle', .075);
+        break;
+      case 'tail':
+        this.tone(280, 202, .10, .062, 'triangle');
+        this.tone(280, 202, .10, .050, 'triangle', .14);
+        break;
+      case 'warning':
+        this.tone(177, 95, .24, .080, 'triangle');
+        this.noise(.16, .05, 560);
+        break;
+      case 'core':
+        this.tone(440, 630, .09, .052, 'triangle');
+        this.tone(664, 880, .15, .057, 'triangle', .065);
+        break;
       case 'win':
         [330, 440, 550, 660].forEach((hz, index) => this.tone(hz, hz, .30, .08, 'triangle', index * .09));
         break;

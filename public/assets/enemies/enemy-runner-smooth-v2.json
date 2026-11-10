@@ -1,0 +1,175 @@
+{
+  "frames": {
+    "runner_left_1": {
+      "frame": {
+        "x": 2,
+        "y": 2,
+        "w": 160,
+        "h": 112
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 160,
+        "h": 112
+      },
+      "sourceSize": {
+        "w": 160,
+        "h": 112
+      }
+    },
+    "runner_left_2": {
+      "frame": {
+        "x": 164,
+        "y": 2,
+        "w": 160,
+        "h": 112
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 160,
+        "h": 112
+      },
+      "sourceSize": {
+        "w": 160,
+        "h": 112
+      }
+    },
+    "runner_left_3": {
+      "frame": {
+        "x": 326,
+        "y": 2,
+        "w": 160,
+        "h": 112
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 160,
+        "h": 112
+      },
+      "sourceSize": {
+        "w": 160,
+        "h": 112
+      }
+    },
+    "runner_left_4": {
+      "frame": {
+        "x": 488,
+        "y": 2,
+        "w": 160,
+        "h": 112
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 160,
+        "h": 112
+      },
+      "sourceSize": {
+        "w": 160,
+        "h": 112
+      }
+    },
+    "runner_left_5": {
+      "frame": {
+        "x": 650,
+        "y": 2,
+        "w": 160,
+        "h": 112
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 160,
+        "h": 112
+      },
+      "sourceSize": {
+        "w": 160,
+        "h": 112
+      }
+    },
+    "runner_left_6": {
+      "frame": {
+        "x": 812,
+        "y": 2,
+        "w": 160,
+        "h": 112
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 160,
+        "h": 112
+      },
+      "sourceSize": {
+        "w": 160,
+        "h": 112
+      }
+    },
+    "runner_left_7": {
+      "frame": {
+        "x": 974,
+        "y": 2,
+        "w": 160,
+        "h": 112
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 160,
+        "h": 112
+      },
+      "sourceSize": {
+        "w": 160,
+        "h": 112
+      }
+    },
+    "runner_left_8": {
+      "frame": {
+        "x": 1136,
+        "y": 2,
+        "w": 160,
+        "h": 112
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 160,
+        "h": 112
+      },
+      "sourceSize": {
+        "w": 160,
+        "h": 112
+      }
+    }
+  },
+  "meta": {
+    "app": "Horde Breaker sprite grid packer",
+    "version": "1.0",
+    "image": "enemy-runner-smooth-v2.webp",
+    "format": "RGBA8888",
+    "size": {
+      "w": 1298,
+      "h": 116
+    },
+    "scale": "1"
+  }
+}

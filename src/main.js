@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { WIDTH, HEIGHT, GUNS, Run } from './model.js';
 import { createBattleScene } from './BattleScene.js';
+import { MEDALS, normalizeSave, recordBattle } from './records.js';
 import { Sounds } from './sound.js';
 import './style.css';
 
@@ -20,6 +21,8 @@ const directions = {
   KeyA: [-1, 0], KeyD: [1, 0], KeyW: [0, -1], KeyS: [0, 1],
 };
 const gunColors = { side: '#83d6b4', front: '#f0c274', rear: '#9bbfe8' };
+const gunGlyphs = { side: '↔', front: '➤', rear: '↶', repair: '+' };
+const damageLabels = { head: '车头基础炮', crossfire: '夹击爆破' };
 const bossLabels = { stalk: '护甲闭合', windup: '冲锋预警', charge: '冲锋', recover: '弱点亮起', exposed: '核心暴露' };
 const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
 const elapsed = seconds => {
@@ -27,22 +30,16 @@ const elapsed = seconds => {
   return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
 };
 
-function loadSave() {
+function loadSave(fallback = normalizeSave(null)) {
   try {
-    const data = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') || {};
-    return {
-      wins: Number.isFinite(data.wins) ? Math.max(0, data.wins) : 0,
-      bestFull: Number.isFinite(data.bestFull) && data.bestFull > 0 ? data.bestFull : null,
-      bestQuick: Number.isFinite(data.bestQuick) && data.bestQuick > 0 ? data.bestQuick : null,
-      maxCrossfires: Number.isFinite(data.maxCrossfires) ? Math.max(0, data.maxCrossfires) : 0,
-      muted: data.muted === true,
-    };
+    const raw = localStorage.getItem(SAVE_KEY);
+    return raw ? normalizeSave(JSON.parse(raw)) : fallback;
   } catch {
-    return { wins: 0, bestFull: null, bestQuick: null, maxCrossfires: 0, muted: false };
+    return fallback;
   }
 }
 
-const save = loadSave();
+let save = loadSave();
 function persist() {
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch {}
 }
@@ -56,11 +53,15 @@ let drag = null;
 let page = null;
 let previousPhase = null;
 let currentSupply = null;
-let settled = false;
+let result = null;
 let lastPaint = -Infinity;
 let lastHP = 0;
+let lastDurability = 0;
 let lastRecovered = 0;
-let lastNotice = '';
+let lastReady = true;
+let lastTailAim = false;
+let lastBossState = '';
+let lastNotice = null;
 let noticeUntil = 0;
 
 const carStatus = Array.from({ length: 4 }, () => {
@@ -112,10 +113,12 @@ function clearInput() {
 }
 
 function updateRecord() {
-  const best = save.bestFull ?? save.bestQuick;
-  ui.record.textContent = best
-    ? (save.bestFull ? '完整战斗' : '快速试打') + ' · 最快 ' + elapsed(best) + ' · 单局最多夹击 ' + save.maxCrossfires
-    : '荒野战线 · 首次出击';
+  const { full, quick } = save.records;
+  const items = [];
+  if (quick.bestTime) items.push('试打 ' + elapsed(quick.bestTime));
+  if (full.bestTime) items.push('完整战 ' + elapsed(full.bestTime));
+  if (save.medals.length) items.push('徽章 ' + save.medals.length + '/' + MEDALS.length);
+  ui.record.textContent = items.length ? items.join(' · ') : '荒野战线 · 单指驾驶';
 }
 
 function start(mode) {
@@ -123,12 +126,17 @@ function start(mode) {
   sounds.play('click');
   clearInput();
   page = null;
-  settled = false;
-  lastNotice = '';
+  result = null;
+  lastNotice = null;
   noticeUntil = 0;
+  run.seed = Math.floor(Math.random() * 0xffffffff);
   run.start(mode);
   lastHP = run.train.hp;
+  lastDurability = run.train.cars.reduce((sum, car) => sum + car.hp, 0);
   lastRecovered = 0;
+  lastReady = true;
+  lastTailAim = false;
+  lastBossState = '';
   paint(true);
 }
 
@@ -202,6 +210,7 @@ function showHelp() {
 }
 
 function toggleSound() {
+  save = loadSave(save);
   save.muted = !save.muted;
   sounds.enabled = !save.muted;
   persist();
@@ -227,37 +236,118 @@ function showQuit() {
   );
 }
 
+function showArchive() {
+  save = loadSave(save);
+  updateRecord();
+  showPanel('本机记录', '作战档案', '快速试打与完整战斗分别记下最快通关、夹击和齐射战绩。');
+  const records = document.createElement('div');
+  records.className = 'archive-records';
+  for (const [mode, label] of [['quick', '快速试打'], ['full', '完整战斗']]) {
+    const record = save.records[mode];
+    const box = document.createElement('div');
+    box.className = 'archive-mode';
+    const title = document.createElement('strong');
+    title.textContent = label;
+    const best = document.createElement('span');
+    best.textContent = record.bestTime ? '最快 ' + elapsed(record.bestTime) : '待通关';
+    const detail = document.createElement('small');
+    detail.textContent = '单局夹击 ' + record.bestCrossfires + ' · 单发击毁 ' + record.bestBarrage;
+    box.append(title, best, detail);
+    records.appendChild(box);
+  }
+  ui.body.appendChild(records);
+  if (save.legacyCrossfires > 0 || save.legacyWins > 0) {
+    const legacy = document.createElement('small');
+    legacy.className = 'archive-legacy';
+    legacy.textContent = '初版纪录 · 通关 ' + save.legacyWins + ' 局 · 单局夹击 ' + save.legacyCrossfires + ' 次';
+    ui.body.appendChild(legacy);
+  }
+  const medals = document.createElement('div');
+  medals.className = 'medals';
+  for (const medal of MEDALS) {
+    const earned = save.medals.includes(medal.id);
+    const row = document.createElement('div');
+    row.className = 'medal' + (earned ? ' earned' : '');
+    const title = document.createElement('strong');
+    title.textContent = (earned ? '◆ ' : '◇ ') + medal.name;
+    const detail = document.createElement('small');
+    detail.textContent = medal.goal;
+    row.append(title, detail);
+    medals.appendChild(row);
+  }
+  ui.body.appendChild(medals);
+  ui.actions.appendChild(button('回到首页', 'primary', () => { page = null; paint(true); }));
+}
+
 function showSupply() {
   const supply = run.supply;
   if (!supply) return;
   showPanel('荒野补给', supply.title || '整备车队',
     supply.description || '接炮增加一个射界，合并加强当前火力。');
-  supply.options.forEach((option, index) => {
-    ui.body.appendChild(button(option.label, 'option', () => {
-      if (run.phase !== 'supply' || run.supply !== supply) return;
-      sounds.unlock();
-      run.choose(option.id);
-      sounds.play('click');
-      paint(true);
-    }, option.description || (String(index + 1) + '号方案')));
-  });
+  const commit = (id, targetId) => {
+    if (run.phase !== 'supply' || run.supply !== supply) return;
+    sounds.unlock();
+    if (run.choose(id, targetId)) sounds.play('click');
+    paint(true);
+  };
+  for (const option of supply.options) {
+    const preview = option.preview;
+    const type = preview?.type || option.type;
+    const glyph = gunGlyphs[type] || '◇';
+    if (option.id !== 'merge' || !option.targets?.length) {
+      const detail = option.id === 'attach' && preview
+        ? preview.effect + ' · 齐射 ' + preview.volley
+        : option.description;
+      const action = button(glyph + '  ' + option.label, 'option', () => commit(option.id), detail);
+      action.style.setProperty('--choice-color', gunColors[type] || '#97d6a2');
+      ui.body.appendChild(action);
+      continue;
+    }
+
+    const block = document.createElement('section');
+    block.className = 'merge-block';
+    const picker = document.createElement('div');
+    picker.className = 'cannon-picker';
+    picker.setAttribute('role', 'group');
+    picker.setAttribute('aria-label', '选择强化炮节');
+    let target = option.targets.find(item => item.id === option.defaultTargetId) ?? option.targets[0];
+    const action = button('合并强化', 'option', () => commit('merge', target.id), '提升选中炮节的伤害');
+    const title = action.querySelector('strong');
+    const detail = action.querySelector('span');
+    const chips = [];
+    const display = () => {
+      title.textContent = (gunGlyphs[target.type] || '◇') + '  合并强化  ' + target.label;
+      detail.textContent = '等级 ' + target.level + ' → ' + target.nextLevel + ' · 齐射 ' + target.volley + ' → ' + target.nextVolley;
+      action.style.setProperty('--choice-color', gunColors[target.type] || '#f5c878');
+      for (const chip of chips) chip.element.setAttribute('aria-pressed', String(chip.id === target.id));
+    };
+    if (option.targets.length > 1) {
+      for (const entry of option.targets) {
+        const chip = button(entry.label + ' · Lv.' + entry.level, 'cannon-chip', () => { target = entry; display(); });
+        chip.style.setProperty('--choice-color', gunColors[entry.type]);
+        picker.appendChild(chip);
+        chips.push({ id: entry.id, element: chip });
+      }
+      block.appendChild(picker);
+    }
+    block.appendChild(action);
+    display();
+    ui.body.appendChild(block);
+  }
 }
 
 function showResult() {
   const won = run.phase === 'won';
-  if (!settled) {
-    settled = true;
-    if (won) {
-      save.wins++;
-      const key = run.mode === 'quick' ? 'bestQuick' : 'bestFull';
-      save[key] = save[key] ? Math.min(save[key], run.time) : run.time;
-    }
-    save.maxCrossfires = Math.max(save.maxCrossfires, run.stats.crossfires);
+  if (!result) {
+    save = loadSave(save);
+    result = recordBattle(save, run);
     persist();
     updateRecord();
     sounds.play(won ? 'win' : 'loss');
   }
-  showPanel(won ? '作战胜利' : '作战结束', won ? '守卫已击破' : '车队撤退',
+  const label = run.mode === 'quick' ? '快速试打' : '完整战斗';
+  const newRecord = result.bestTime ? ' · 最快纪录' : result.bestCrossfires ? ' · 夹击纪录' : '';
+  showPanel(label + newRecord, won ? '守卫已击破' : '车队撤退',
     won ? '装甲小队打穿了荒野战线。' : (run.reason || run.resultReason || '整备火力，再出击一次。'));
   const grid = document.createElement('div');
   grid.className = 'result-grid';
@@ -265,7 +355,9 @@ function showResult() {
     ['战斗时间', elapsed(run.time)],
     ['击毁敌人', run.stats.kills],
     ['交叉爆破', run.stats.crossfires],
+    ['单次齐射击毁', run.stats.bestVolleyKills ?? 0],
     ['救回炮车', run.stats.recovered],
+    ['双核击破', run.stats.dualBreaks ?? 0],
   ];
   for (const [label, value] of stats) {
     const cell = document.createElement('div');
@@ -278,6 +370,16 @@ function showResult() {
     grid.appendChild(cell);
   }
   ui.body.appendChild(grid);
+  const [key, damage] = Object.entries(run.stats.damageByType || {}).sort((a, b) => b[1] - a[1])[0] || [];
+  if (damage > 0 || result.medals.length) {
+    const note = document.createElement('p');
+    note.className = 'result-note';
+    const parts = [];
+    if (damage > 0) parts.push('主力 ' + (GUNS[key]?.name || damageLabels[key]));
+    for (const medal of result.medals) parts.push('◆ ' + medal.name);
+    note.textContent = parts.join(' · ');
+    ui.body.appendChild(note);
+  }
   const mode = run.mode;
   ui.actions.append(
     button('再出击一次', 'primary', () => start(mode)),
@@ -296,6 +398,7 @@ function paint(force = false) {
       previousPhase = run.phase;
     }
     currentSupply = run.supply;
+    ui.frame.classList.toggle('playing', run.phase === 'playing');
     ui.menu.hidden = run.phase !== 'menu';
     ui.hud.hidden = run.phase === 'menu';
     ui.controls.hidden = run.phase !== 'playing';
@@ -305,18 +408,37 @@ function paint(force = false) {
     else if (run.phase === 'paused' && page === 'quit') showQuit();
     else if (run.phase === 'paused') showPause();
     else if (run.phase === 'menu' && page === 'help') showHelp();
+    else if (run.phase === 'menu' && page === 'archive') showArchive();
   }
   if (!force && !changed && now - lastPaint < 55) return;
   lastPaint = now;
   if (run.phase === 'menu') { ui.notice.hidden = true; return; }
   const { train, stats, volley } = run;
   const hp = clamp(train.hp, 0, train.maxHp);
-  if (hp < lastHP && run.phase === 'playing') sounds.play('damage');
-  if (stats.recovered > lastRecovered) sounds.play('recover');
+  const durability = train.cars.reduce((sum, car) => sum + car.hp, 0);
+  const boss = run.director?.boss;
+  const bossState = boss?.state || '';
+  const ready = volley.charge >= .999;
+  const tailAim = run.enemies.some(enemy => enemy.hp > 0 && enemy.state === 'tail-aim');
+  if (run.phase === 'playing') {
+    if (bossState === 'windup' && lastBossState !== bossState) sounds.play('warning');
+    else if (bossState === 'exposed' && lastBossState !== bossState) sounds.play('core');
+    else if (tailAim && !lastTailAim) sounds.play('tail');
+    else if (stats.recovered > lastRecovered) sounds.play('recover');
+    else if (hp < lastHP || durability < lastDurability) sounds.play('damage');
+    else if (ready && !lastReady) sounds.play('ready');
+  }
   lastHP = hp;
+  lastDurability = durability;
   lastRecovered = stats.recovered;
+  lastReady = ready;
+  lastTailAim = tailAim;
+  lastBossState = bossState;
   ui.clock.textContent = elapsed(run.time);
-  ui.wave.textContent = run.director?.boss?.hp > 0 ? '首领交战' : '第 ' + String(run.stage || 1).padStart(2, '0') + ' 段';
+  const untilSupply = (run.director?.nextSupplyAt ?? Infinity) - run.time;
+  ui.wave.textContent = boss?.hp > 0 ? '首领交战'
+    : untilSupply > 0 && untilSupply <= 4 ? '补给 ' + Math.ceil(untilSupply) + ' 秒'
+    : '第 ' + String(run.stage || 1).padStart(2, '0') + ' 段';
   ui.health.textContent = Math.ceil(hp) + ' / ' + train.maxHp;
   ui.healthFill.style.width = (hp / train.maxHp * 100) + '%';
   ui.healthFill.parentElement.classList.toggle('critical', hp <= train.maxHp * .3);
@@ -325,33 +447,39 @@ function paint(force = false) {
     const car = train.cars[index];
     slot.classList.toggle('empty', !car);
     slot.classList.toggle('tail', !!car && index === train.cars.length - 1);
+    slot.classList.toggle('danger', tailAim && !!car && index === train.cars.length - 1);
     slot.style.setProperty('--car-color', gunColors[car?.type] || '#d0bd87');
-    slot.title = car ? ((GUNS[car.type]?.name ?? '炮车') + ' · 耐久 ' + car.hp + '/' + car.maxHp) : '空炮位';
+    slot.title = car ? ((GUNS[car.type]?.name ?? '炮车') + ' Lv.' + car.level + ' · 耐久 ' + car.hp + '/' + car.maxHp) : '空炮位';
     pips.forEach((pip, j) => pip.classList.toggle('on', !!car && j < car.hp));
   });
-  const boss = run.director?.boss;
   ui.bossHud.hidden = !boss || boss.hp <= 0;
   if (!ui.bossHud.hidden) {
     ui.bossFill.style.width = (clamp(boss.hp / boss.maxHp, 0, 1) * 100) + '%';
     ui.bossState.textContent = bossLabels[boss.state] || '交战';
   }
-  const ready = volley.charge >= .999;
   ui.volley.classList.toggle('ready', ready);
+  ui.volley.classList.toggle('crossfire', ready && !!volley.mark);
   ui.volley.style.setProperty('--charge', (clamp(volley.charge, 0, 1) * 360) + 'deg');
-  ui.caption.textContent = ready ? (volley.mark ? '夹击就绪' : '就绪 · 空格') : Math.floor(volley.charge * 100) + '%';
-  ui.hint.textContent = run.hint || (ready && volley.mark ? '双环已锁定，点击齐射' : '沿怪群外侧开弯，找交叉火力');
-  if (run.message && run.message !== lastNotice) {
-    lastNotice = run.message;
+  ui.caption.textContent = ready ? (volley.mark ? '夹击就绪' : '已装填') : Math.floor(volley.charge * 100) + '%';
+  const urgent = bossState === 'windup' || tailAim;
+  ui.hint.dataset.tone = urgent ? 'danger' : ready && volley.mark ? 'combo' : '';
+  ui.hint.textContent = bossState === 'windup' ? '守卫锁定冲锋 · 带着尾车离开红线'
+    : tailAim ? '尾车被锁定 · 转弯让尾车离开预警'
+    : ready && volley.mark ? '双环亮起 · 点齐射打出夹击'
+    : run.hint || '沿怪群外侧开弯，找交叉火力';
+  const notice = run.noticeId ?? run.message;
+  if (run.message && notice !== lastNotice) {
+    lastNotice = notice;
     noticeUntil = now + 1800;
   }
-  if (!run.message) lastNotice = '';
-  ui.notice.hidden = run.phase !== 'playing' || now >= noticeUntil || !lastNotice;
-  if (!ui.notice.hidden) ui.notice.textContent = lastNotice;
+  ui.notice.hidden = run.phase !== 'playing' || now >= noticeUntil || !run.message;
+  if (!ui.notice.hidden) ui.notice.textContent = run.message;
 }
 
 get('start').addEventListener('click', () => start('full'));
 get('quick').addEventListener('click', () => start('quick'));
 get('help').addEventListener('click', () => { page = 'help'; paint(true); });
+get('archive').addEventListener('click', () => { page = 'archive'; paint(true); });
 get('pause').addEventListener('click', pause);
 ui.volley.addEventListener('click', fire);
 

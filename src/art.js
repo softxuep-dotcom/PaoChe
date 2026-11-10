@@ -14,6 +14,48 @@ export const ART = Object.freeze({
   salvage: 'tow-salvage',
 });
 
+function enemySheet(kind, version, width, height, originY, coverage, padding, fps, count, directions) {
+  const tracks = Object.fromEntries(directions.map(direction => [
+    direction,
+    Object.freeze(Array.from({ length: count }, (_, i) => kind + '_' + direction + '_' + (i + 1))),
+  ]));
+  return Object.freeze({
+    key: 'tow-atlas-' + kind, stem: 'enemy-' + kind + '-' + version,
+    width, height, originY, coverage, padding, fps, tracks: Object.freeze(tracks),
+  });
+}
+
+// The atlas cells have transparent margins. Use their painted width and center,
+// so swapping art keeps the entity centered on the same simulation point.
+const ENEMY_SHEETS = Object.freeze({
+  slime: enemySheet('slime', 'smooth-v2', 72, 72, .725, .75, 7, 8, 5, ['front', 'front_left', 'left']),
+  runner: enemySheet('runner', 'smooth-v2', 160, 112, .54, .89, 12, 12, 8, ['left']),
+  tank: enemySheet('tank', 'smooth-v2', 160, 144, .57, .89, 13, 8, 8, ['left']),
+  boss: enemySheet('boss', 'smooth-v6', 192, 192, .58, .81, 22, 8, 8, ['left']),
+});
+
+export function preloadEnemySheets(scene) {
+  // The portable single-file build deliberately makes no network or file
+  // requests. Its procedural fallback covers every enemy.
+  if (globalThis.location?.protocol === 'file:') return;
+  const directory = import.meta.env.BASE_URL + 'assets/enemies/';
+  for (const sheet of Object.values(ENEMY_SHEETS)) {
+    if (scene.textures.exists(sheet.key)) continue;
+    const path = directory + sheet.stem;
+    scene.load.atlas(sheet.key, path + '.webp', path + '.json');
+  }
+}
+
+export function loadedEnemySheets(scene) {
+  const available = {};
+  for (const [kind, sheet] of Object.entries(ENEMY_SHEETS)) {
+    if (!scene.textures.exists(sheet.key)) continue;
+    const texture = scene.textures.get(sheet.key);
+    if (Object.values(sheet.tracks).every(track => track.every(frame => texture.has(frame)))) available[kind] = sheet;
+  }
+  return available;
+}
+
 function randomFrom(seed) {
   return () => {
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
@@ -107,11 +149,11 @@ function ground(ctx) {
   ctx.fillStyle = gradient(ctx, 0, 0, 440, 800, ['#141b20', '#26312e', '#1b2426']);
   ctx.fillRect(0, 0, 480, 800);
   const lamp = ctx.createRadialGradient(222, 367, 18, 228, 405, 310);
-  lamp.addColorStop(0, '#38443b');
-  lamp.addColorStop(.7, '#293530');
+  lamp.addColorStop(0, '#424a3e');
+  lamp.addColorStop(.7, '#303b33');
   lamp.addColorStop(1, '#192327');
   box(ctx, 19, 119, 442, 555, 22, lamp, '#0c1418', 6);
-  box(ctx, 26, 126, 428, 541, 18, 'rgba(0,0,0,0)', '#5a6256', 1.3);
+  box(ctx, 26, 126, 428, 541, 18, 'rgba(0,0,0,0)', '#687360', 1.3);
 
   ctx.save();
   rounded(ctx, 27, 128, 426, 537, 17);
@@ -162,6 +204,13 @@ function ground(ctx) {
   }
   ctx.restore();
 
+  for (const x of [28, 452]) {
+    for (const y of [229, 368, 544]) {
+      glow(ctx, x, y, 16, 'rgba(111,196,163,.16)');
+      box(ctx, x - 3, y - 9, 6, 18, 2, '#232f2d', '#4f5d51', .8);
+      box(ctx, x - 1, y - 5, 2, 10, 1, '#78a792');
+    }
+  }
   for (const y of [133, 659]) {
     for (const x of [36, 444]) {
       glow(ctx, x, y, 27, 'rgba(249,166,69,0.20)');
@@ -197,10 +246,12 @@ function engine(ctx) {
   treads(ctx, 12, 8, 35);
   treads(ctx, 12, 32, 35);
   poly(ctx, [[12,13],[43,13],[53,18],[57,23],[53,29],[43,34],[12,34],[7,29],[7,18]],
-    gradient(ctx, 6, 13, 54, 36, ['#77978b','#355e5b','#283d3c']), '#142727', 1.7);
+    gradient(ctx, 6, 13, 54, 36, ['#8eaf9c','#3c7068','#283d3c']), '#142727', 1.7);
+  line(ctx, 13, 14, 42, 14, '#b0c39c', 1.15);
+  line(ctx, 13, 32, 42, 32, '#5d9d89', 1.15);
   box(ctx, 13, 15, 15, 17, 3, gradient(ctx, 13, 15, 27, 32, ['#4a7774','#224645']), '#172f31');
   box(ctx, 16, 18, 8, 10, 1.6, gradient(ctx, 15, 18, 25, 28, ['#c5eddf','#5db9ba','#3c797e']), '#24474a', .9);
-  box(ctx, 30, 17, 16, 13, 2.3, gradient(ctx, 31, 15, 46, 30, ['#ddbd76','#a78148','#695032']), '#58452e');
+  box(ctx, 30, 17, 16, 13, 2.3, gradient(ctx, 31, 15, 46, 30, ['#f1ce82','#b38b4b','#695032']), '#58452e');
   for (let x = 33; x < 45; x += 3) line(ctx, x, 19, x, 28, '#493d31', 1);
   poly(ctx, [[45,16],[54,19],[59,23],[54,28],[45,31],[47,23]], '#bc9558', '#574935');
   line(ctx, 50, 21, 57, 23, '#ffe5a0', 2);
@@ -217,9 +268,9 @@ function engine(ctx) {
 
 function carriage(ctx, kind) {
   const scheme = {
-    side: ['#719d9b', '#386b6e', '#26474e', '#8de8dc'],
-    front: ['#b89462', '#8e653e', '#4f4438', '#ffcb7a'],
-    rear: ['#8790a5', '#596b8d', '#333d50', '#c6c7f7'],
+    side: ['#87b9ae', '#417c7e', '#26474e', '#a4f4e1'],
+    front: ['#d4ad72', '#a77a48', '#4f4438', '#ffe09a'],
+    rear: ['#a6add2', '#646f9d', '#333d50', '#e0ddff'],
   }[kind];
   const [light, mid, dark, signal] = scheme;
   ellipse(ctx, 26, 24, 22, 14, 'rgba(7,12,15,.46)');
@@ -229,6 +280,8 @@ function carriage(ctx, kind) {
   poly(ctx, [[11,12],[37,12],[43,17],[43,27],[37,33],[11,33],[7,27],[7,17]],
     gradient(ctx, 9, 12, 38, 32, [light, mid, dark]), '#172628', 1.6);
   box(ctx, 12, 14, 25, 16, 2.4, dark, light, .8);
+  line(ctx, 11, 13, 37, 13, light, 1.4);
+  line(ctx, 11, 31, 37, 31, mid, 1.4);
   ellipse(ctx, 24, 22, 9, 7, mid, '#1d2928', 1.2);
   if (kind === 'side') {
     for (const [a, b] of [[5, 19], [25, 39]]) {
@@ -247,7 +300,8 @@ function carriage(ctx, kind) {
     rivet(ctx, x, 14, signal);
     rivet(ctx, x, 30, signal);
   }
-  line(ctx, 13, 27, 16, 27, signal, 1.4);
+  line(ctx, 12, 23, 16, 23, signal, 1.6);
+  line(ctx, 12, 27, 16, 27, signal, 1.6);
 }
 
 function slime(ctx) {

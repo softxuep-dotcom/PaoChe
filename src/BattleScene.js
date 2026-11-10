@@ -1,11 +1,12 @@
 import Phaser from 'phaser';
-import { ART, installArt } from './art.js';
+import { ART, installArt, loadedEnemySheets, preloadEnemySheets } from './art.js';
 
 const TAU = Math.PI * 2;
 const GOLD = 0xf4c571;
 const CREAM = 0xffefb9;
 const TEAL = 0x80dcd2;
 const DANGER = 0xf080a7;
+const DANGER_LIGHT = 0xffd2df;
 const DARK = 0x142021;
 const ENEMY_LIMIT = 84;
 const CAR_LIMIT = 4;
@@ -76,6 +77,16 @@ function markDiamond(g, x, y, r, color, alpha) {
   g.moveTo(x, y - r).lineTo(x + r, y).lineTo(x, y + r).lineTo(x - r, y).closePath().strokePath();
 }
 
+function lockCorners(g, x, y, radius, color, alpha) {
+  g.lineStyle(2, color, alpha);
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      const cx = x + sx * radius, cy = y + sy * radius;
+      g.beginPath().moveTo(cx - sx * 6, cy).lineTo(cx, cy).lineTo(cx, cy - sy * 6).strokePath();
+    }
+  }
+}
+
 function lineDash(g, x0, y0, x1, y1, dash = 8, gap = 7) {
   const dx = x1 - x0, dy = y1 - y0, length = Math.hypot(dx, dy);
   if (length < .001) return;
@@ -92,17 +103,41 @@ function visibleRay(x, y, dx, dy, maxLength) {
   return Math.max(0, Math.min(xLimit, yLimit, maxLength));
 }
 
+function distanceToLine2(x, y, x0, y0, x1, y1) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const t = Math.max(0, Math.min(1, ((x - x0) * dx + (y - y0) * dy) / (dx * dx + dy * dy || 1)));
+  return (x - x0 - dx * t) ** 2 + (y - y0 - dy * t) ** 2;
+}
+
+function displaySheetEnemy(sprite, sheet, x, y, radius, heading, time, phase, still) {
+  const dx = Math.cos(heading), dy = Math.sin(heading);
+  const front = sheet.tracks.front && Math.abs(dx) < .42;
+  const diagonal = sheet.tracks.front_left && dy > .42 && Math.abs(dx) < .91;
+  const track = front ? sheet.tracks.front : diagonal ? sheet.tracks.front_left : sheet.tracks.left;
+  const frame = track[still ? 0 : Math.floor(time * sheet.fps + phase) % track.length];
+  if (sprite.texture.key !== sheet.key) sprite.setTexture(sheet.key, frame);
+  else if (sprite.frame.name !== frame) sprite.setFrame(frame);
+  const width = (radius * 2 + sheet.padding) / sheet.coverage;
+  sprite.setVisible(true).setPosition(x, y).setOrigin(.5, sheet.originY)
+    .setFlipX(!front && dx > 0).setRotation(0).setDisplaySize(width, width * sheet.height / sheet.width);
+}
+
 export function createBattleScene(run, controls, onFrame) {
   return new class BattleScene extends Phaser.Scene {
     constructor() {
       super({ key: 'battle' });
     }
 
+    preload() {
+      preloadEnemySheets(this);
+    }
+
     create() {
       installArt(this);
+      this.enemySheets = loadedEnemySheets(this);
       this.add.image(240, 400, ART.ground).setDepth(0);
       this.floor = this.add.graphics().setDepth(1);
-      this.danger = this.add.graphics().setDepth(2);
+      this.danger = this.add.graphics().setDepth(13);
       this.guide = this.add.graphics().setDepth(3);
       this.couplers = this.add.graphics().setDepth(4);
       this.enemySprites = Array.from({ length: ENEMY_LIMIT }, () =>
@@ -117,7 +152,11 @@ export function createBattleScene(run, controls, onFrame) {
       this.flashText = this.add.text(0, 0, '', {
         fontFamily: '"Microsoft YaHei", "PingFang SC", sans-serif',
         fontSize: '20px', fontStyle: 'bold', color: '#ffeab8', stroke: '#211c23', strokeThickness: 4,
-      }).setOrigin(.5).setDepth(13).setVisible(false);
+      }).setOrigin(.5).setDepth(14).setVisible(false);
+      this.salvageText = this.add.text(0, 0, '', {
+        fontFamily: '"Microsoft YaHei", "PingFang SC", sans-serif',
+        fontSize: '13px', fontStyle: 'bold', color: '#ffdf96', stroke: '#182022', strokeThickness: 3,
+      }).setOrigin(.5).setDepth(12).setVisible(false);
       this.renderWorld(0);
       onFrame?.(run);
     }
@@ -137,6 +176,7 @@ export function createBattleScene(run, controls, onFrame) {
       this.tracers.clear();
       this.over.clear();
       this.flashText.setVisible(false);
+      this.salvageText.setVisible(false);
       if (run.phase === 'menu') {
         this.drawMenuFormation(realTime);
         return;
@@ -192,13 +232,18 @@ export function createBattleScene(run, controls, onFrame) {
           sprite.setVisible(false);
           continue;
         }
-        const key = i ? ART.slime : ART.brute;
-        if (sprite.texture.key !== key) sprite.setTexture(key);
         const a = i * 2.13;
         const x = MENU_X + (i ? Math.cos(a) * 31 : 0);
         const y = MENU_Y + (i ? Math.sin(a) * 26 : 0);
-        sprite.setVisible(true).setPosition(x, y).setRotation(a + .3)
-          .setDisplaySize(i ? 36 : 49, i ? 32.6 : 44.5);
+        const sheet = this.enemySheets[i ? 'slime' : 'tank'];
+        if (sheet) {
+          displaySheetEnemy(sprite, sheet, x, y, i ? 14.5 : 19, a + .3, time, i * 1.7, true);
+        } else {
+          const key = i ? ART.slime : ART.brute;
+          if (sprite.texture.key !== key) sprite.setTexture(key);
+          sprite.setVisible(true).setPosition(x, y).setOrigin(.5).setFlipX(false).setRotation(a + .3)
+            .setDisplaySize(i ? 36 : 49, i ? 32.6 : 44.5);
+        }
       }
       const tracer = this.tracers;
       for (const place of [first, second]) {
@@ -235,21 +280,45 @@ export function createBattleScene(run, controls, onFrame) {
         if (h.kind === 'charge' || h.kind === 'aim') {
           const x0 = h.x0, y0 = h.y0, x1 = h.x1, y1 = h.y1;
           const aim = h.kind === 'aim', active = h.dashed;
+          const tailAim = aim && (h.targetId > 0 || h.owner?.state === 'tail-aim');
           const angle = Math.atan2(y1 - y0, x1 - x0);
           const px = Math.sin(angle) * radius, py = -Math.cos(angle) * radius;
-          g.lineStyle(radius * 2 + 5, 0x301c32, aim ? .25 : .69).lineBetween(x0, y0, x1, y1);
-          g.lineStyle(radius * 2, DANGER, active ? .34 : aim ? .06 : .13 + progress * .12)
+          this.floor.lineStyle(radius * 2 + 5, 0x301c32, aim ? .25 : .69).lineBetween(x0, y0, x1, y1);
+          this.floor.lineStyle(radius * 2, DANGER, active ? .34 : aim ? .06 : .13 + progress * .12)
             .lineBetween(x0, y0, x1, y1);
-          g.lineStyle(aim ? 1.3 : 2, DANGER, aim ? .74 : .75 + progress * .2);
           if (!aim) {
-            lineDash(g, x0 + px, y0 + py, x1 + px, y1 + py);
-            lineDash(g, x0 - px, y0 - py, x1 - px, y1 - py);
+            g.lineStyle(4.6, 0x3d1c37, .86);
+            g.lineBetween(x0 + px, y0 + py, x1 + px, y1 + py);
+            g.lineBetween(x0 - px, y0 - py, x1 - px, y1 - py);
+            g.lineStyle(1.9, active ? DANGER_LIGHT : DANGER, .76 + progress * .2);
+            lineDash(g, x0 + px, y0 + py, x1 + px, y1 + py, 12, 5);
+            lineDash(g, x0 - px, y0 - py, x1 - px, y1 - py, 12, 5);
+            if (!active) {
+              for (const car of run.train.cars) {
+                if (distanceToLine2(car.x, car.y, x0, y0, x1, y1) < (radius + 11) ** 2) {
+                  lockCorners(g, car.x, car.y, 26, DANGER_LIGHT, .85);
+                }
+              }
+            }
+          } else {
+            g.lineStyle(tailAim ? 2 : 1.4, DANGER, tailAim ? .95 : .74);
+            lineDash(g, x0, y0, x1, y1, 7, 6);
           }
-          lineDash(g, x0, y0, x1, y1, 9, aim ? 7 : 10);
+          if (tailAim) {
+            const impactRadius = h.impactR || 31;
+            this.floor.fillStyle(DANGER, .1 + progress * .1).fillCircle(x1, y1, impactRadius);
+            g.lineStyle(2, DANGER, .63 + progress * .35).strokeCircle(x1, y1, impactRadius);
+            lockCorners(g, x1, y1, impactRadius * .6, DANGER_LIGHT, .91);
+            const id = h.targetId ?? h.owner?.biteId;
+            const threatened = run.train.cars.find(car => car.id === id);
+            if (threatened && (threatened.x - x1) ** 2 + (threatened.y - y1) ** 2 <= impactRadius ** 2) {
+              arrow(g, threatened.x, threatened.y - 26, Math.PI / 2, 10, DANGER_LIGHT, .95);
+            }
+          }
           const length = Math.hypot(x1 - x0, y1 - y0);
-          for (let d = 24; d < length; d += 44) {
+          for (let d = 22; d < length - 8; d += aim ? 53 : 37) {
             const p = pointAlong(x0, y0, angle, d);
-            arrow(g, p.x, p.y, angle, aim ? 4 : 8, DANGER, .66);
+            arrow(g, p.x, p.y, angle, aim ? 4 : 8, DANGER_LIGHT, aim ? .67 : .85);
           }
           continue;
         }
@@ -260,7 +329,7 @@ export function createBattleScene(run, controls, onFrame) {
         g.lineStyle(3.8, DARK, .64).strokeCircle(x, y, radius);
         g.lineStyle(1.8, DANGER, terrain ? .69 : .78 + progress * .2).strokeCircle(x, y, radius);
         if (!terrain) g.lineStyle(1.1, 0xffb4c3, .75).strokeCircle(x, y, Math.max(2, radius * (1 - progress)));
-        tickRing(g, x, y, radius, 6, 5, time * .15, DANGER, .67);
+        tickRing(g, x, y, radius, 6, 5, .3, DANGER, .84);
       }
     }
 
@@ -281,27 +350,38 @@ export function createBattleScene(run, controls, onFrame) {
       }
       const volley = run.volley;
       if (!volley || volley.charge < .995) return;
+      const plan = run.volleyPlan || [];
       for (const aim of volley.aim || []) {
-        const color = numericColor(aim.color, TEAL);
+        if (plan.some(shot => shot.car === aim.car)) continue;
         const angle = aim.angle;
         const dx = Math.cos(angle), dy = Math.sin(angle);
-        const reach = visibleRay(aim.x, aim.y, dx, dy, Math.min(aim.range || 118, volley.mark ? 101 : 85));
-        if (reach < 12) continue;
-        const px = aim.x + dx * reach, py = aim.y + dy * reach;
-        g.lineStyle(3.6, DARK, .46).lineBetween(aim.x, aim.y, px, py);
-        g.lineStyle(1.35, color, volley.mark ? .59 : .34);
-        lineDash(g, aim.x, aim.y, px, py, 9, 6);
-        arrow(g, px, py, angle, 6, color, .8);
+        const reach = visibleRay(aim.x, aim.y, dx, dy, 34);
+        if (reach < 20) continue;
+        arrow(g, aim.x + dx * reach, aim.y + dy * reach, angle, 5, numericColor(aim.color, TEAL), .32);
+      }
+      // Draw only the paths that the current firing plan actually uses. A bright
+      // bracket identifies each car taking part in the marked crossfire.
+      for (const { car, target } of plan) {
+        const selected = target.id === volley.mark?.id;
+        const weakpoint = target.kind === 'weakpoint';
+        const color = selected ? GOLD : numericColor(volley.aim.find(aim => aim.car === car)?.color, TEAL);
+        const vx = target.x - car.x, vy = target.y - car.y;
+        const distance = Math.hypot(vx, vy);
+        if (selected) lockCorners(this.over, car.x, car.y, 23, GOLD, .96);
+        if (distance <= 22) continue;
+        const dx = vx / distance, dy = vy / distance;
+        const reach = selected || weakpoint ? distance - Math.max(8, (target.r || 12) * .82) : Math.min(53, distance - 9);
+        if (reach <= 20) continue;
+        const x0 = car.x + dx * 18, y0 = car.y + dy * 18;
+        const x1 = car.x + dx * reach, y1 = car.y + dy * reach;
+        g.lineStyle(selected ? 5 : 3, DARK, .77).lineBetween(x0, y0, x1, y1);
+        g.lineStyle(selected ? 2.2 : 1.5, color, selected ? .95 : weakpoint ? .73 : .48)
+          .lineBetween(x0, y0, x1, y1);
+        if (selected) g.lineStyle(.9, CREAM, .93).lineBetween(x0, y0, x1, y1);
+        arrow(g, x1, y1, Math.atan2(vy, vx), selected ? 8 : 5, selected ? CREAM : color, selected ? .99 : .68);
       }
       if (volley.mark) {
-        const { x, y, id } = volley.mark, r = volley.mark.r || 16;
-        // The marked shot lines come from the same target plan consumed by fireVolley.
-        for (const { car, target } of run.volleyPlan || []) {
-          if (target.id !== id) continue;
-          g.lineStyle(4, DARK, .6).lineBetween(car.x, car.y, x, y);
-          g.lineStyle(1.6, GOLD, .86);
-          lineDash(g, car.x, car.y, x, y, 10, 4);
-        }
+        const { x, y } = volley.mark, r = volley.mark.r || 16;
         const radius = r + 7 + 2 * Math.sin(time * 7.5);
         this.floor.fillStyle(GOLD, .1).fillCircle(x, y, radius + 4);
         this.over.lineStyle(3.7, DARK, .86).strokeCircle(x, y, radius);
@@ -329,9 +409,9 @@ export function createBattleScene(run, controls, onFrame) {
         prev = car;
       }
       this.floor.fillStyle(TEAL, .07).fillCircle(x, y, 28);
-      this.floor.lineStyle(2, TEAL, .72).strokeCircle(x, y, 22.5);
-      tickRing(this.floor, x, y, 22.5, 4, 4, heading, TEAL, .75);
-      this.engineSprite.setVisible(true).setPosition(x, y).setRotation(heading).setDisplaySize(61, 45);
+      this.floor.lineStyle(2.3, TEAL, .86).strokeCircle(x, y, 23.5);
+      tickRing(this.floor, x, y, 23.5, 4, 4, heading, TEAL, .84);
+      this.engineSprite.setVisible(true).setPosition(x, y).setRotation(heading).setDisplaySize(63, 46.7);
       if (train.headHitT > 0) {
         this.over.lineStyle(2.5, DANGER, Math.min(1, .35 + train.headHitT * 1.6)).strokeCircle(x, y, 27);
       }
@@ -343,7 +423,7 @@ export function createBattleScene(run, controls, onFrame) {
         }
         const key = ART[car.type] || ART.side;
         if (sprite.texture.key !== key) sprite.setTexture(key);
-        sprite.setVisible(true).setPosition(car.x, car.y).setRotation(car.heading || 0).setDisplaySize(47, 41.4);
+        sprite.setVisible(true).setPosition(car.x, car.y).setRotation(car.heading || 0).setDisplaySize(49, 43.1);
         if (car.hitT > 0) this.over.lineStyle(2.4, DANGER, .83).strokeCircle(car.x, car.y, 24);
         const health = car.hp ?? 3, maxHp = car.maxHp ?? 3;
         if (i === cars.length - 1 || health < maxHp) {
@@ -363,7 +443,7 @@ export function createBattleScene(run, controls, onFrame) {
       if (cars.length) {
         const tail = cars[cars.length - 1];
         if (tail.hp === 1) {
-          this.floor.lineStyle(1.8, DANGER, .35 + .22 * Math.sin(time * 8)).strokeCircle(tail.x, tail.y, 28);
+          lockCorners(this.danger, tail.x, tail.y, 26, DANGER, .71 + .2 * Math.sin(time * 8));
         }
       }
     }
@@ -377,15 +457,26 @@ export function createBattleScene(run, controls, onFrame) {
           continue;
         }
         const { x, y, kind } = enemy;
-        const key = textureFor[kind] || ART.slime;
-        if (sprite.texture.key !== key) sprite.setTexture(key);
-        const dims = sizeFor[kind] || sizeFor.slime;
         const r = enemy.r || 14;
-        const scale = kind === 'boss' ? (r + 8) / 43 : kind === 'weakpoint' ? (r + 2) / 14 : (r + 4) / (dims[0] * .43);
-        const pulse = kind === 'slime' ? .97 + .06 * Math.sin(time * 8.4 + enemy.id * 1.41) : 1;
         const heading = Number.isFinite(enemy.heading) ? enemy.heading : 0;
-        sprite.setVisible(kind !== 'weakpoint').setPosition(x, y)
-          .setRotation(heading).setDisplaySize(dims[0] * scale * pulse, dims[1] * scale / pulse);
+        const sheet = this.enemySheets[kind];
+        if (sheet) {
+          const still = enemy.stunT > 0 || enemy.introUntil > time || enemy.state === 'windup' ||
+            enemy.state === 'recover' || enemy.state === 'exposed' || enemy.state === 'tail-aim';
+          displaySheetEnemy(sprite, sheet, x, y, r, heading, time, enemy.id % 7, still);
+          this.floor.fillStyle(0x12181e, .44).fillEllipse(x, y + r * .47, r * 1.75, r * .63);
+          // A short hostile ground dash distinguishes animated enemies even
+          // when their paint palette is close to a friendly cannon.
+          this.floor.lineStyle(1.5, 0xcb708b, .59).lineBetween(x - r * .36, y + r + 2, x + r * .36, y + r + 2);
+        } else {
+          const key = textureFor[kind] || ART.slime;
+          if (sprite.texture.key !== key) sprite.setTexture(key);
+          const dims = sizeFor[kind] || sizeFor.slime;
+          const scale = kind === 'boss' ? (r + 8) / 43 : kind === 'weakpoint' ? (r + 2) / 14 : (r + 4) / (dims[0] * .43);
+          const pulse = kind === 'slime' ? .97 + .06 * Math.sin(time * 8.4 + enemy.id * 1.41) : 1;
+          sprite.setVisible(kind !== 'weakpoint').setPosition(x, y).setOrigin(.5).setFlipX(false)
+            .setRotation(heading).setDisplaySize(dims[0] * scale * pulse, dims[1] * scale / pulse);
+        }
         const depth = kind === 'boss' ? 7 : 6;
         if (sprite.depth !== depth) sprite.setDepth(depth);
         if (kind === 'weakpoint') {
@@ -403,6 +494,16 @@ export function createBattleScene(run, controls, onFrame) {
           if (exposed) markDiamond(this.over, x, y, r * .56, GOLD, .8);
           bar(this.over, x - 33, y - r - 13, 66, 5, enemy.hp / (enemy.maxHp || enemy.hp), exposed ? GOLD : DANGER);
         } else {
+          if (enemy.slowT > 0) {
+            const frost = 0xbce9fc;
+            this.floor.fillStyle(frost, .11).fillCircle(x, y, r + 6);
+            this.over.lineStyle(1.5, frost, .81);
+            for (let n = 0; n < 3; n++) {
+              const offset = (n - 1) * r * .7;
+              this.over.lineBetween(x + offset - 2, y + r + 4, x + offset + 1, y + r - 2);
+              this.over.lineBetween(x + offset, y + r + 2, x + offset + 4, y + r + 3);
+            }
+          }
           if (enemy.elite) {
             this.floor.lineStyle(1.7, DANGER, .72).strokeCircle(x, y, r + 5);
             tickRing(this.floor, x, y, r + 5, 4, 4, .65, DANGER, .7);
@@ -417,6 +518,7 @@ export function createBattleScene(run, controls, onFrame) {
 
     drawSalvage(time) {
       const items = run.debris || [];
+      let nearest = null, distance = Infinity;
       for (let i = 0; i < this.salvageSprites.length; i++) {
         const sprite = this.salvageSprites[i], item = items[i];
         if (!item || item.ttl <= 0 || item.active === false) {
@@ -425,12 +527,19 @@ export function createBattleScene(run, controls, onFrame) {
         }
         const pulse = Math.sin(time * 6.6 + i * 2);
         const { x, y } = item;
+        const d2 = (x - run.train.x) ** 2 + (y - run.train.y) ** 2;
+        if (d2 < distance) {
+          nearest = item;
+          distance = d2;
+        }
         sprite.setVisible(true).setPosition(x, y + pulse * 2).setDisplaySize(35, 35);
         this.floor.fillStyle(GOLD, .11).fillCircle(x, y, 25);
         this.floor.lineStyle(2.2, GOLD, .65 + pulse * .19).strokeCircle(x, y, 23);
         tickRing(this.floor, x, y, 23, 6, 4, time * 1.2, GOLD, .76);
         bar(this.over, x - 11, y + 28, 22, 2.6, item.ttl / (item.life || 8), GOLD);
       }
+      if (nearest) this.salvageText.setVisible(true).setText('救援 ' + Math.ceil(nearest.ttl) + '秒')
+        .setPosition(nearest.x, nearest.y - 29);
     }
 
     drawFire() {
@@ -470,7 +579,10 @@ export function createBattleScene(run, controls, onFrame) {
         const crossfire = effect.kind === 'crossfire';
         const rescue = effect.kind === 'rescue';
         const coreBreak = effect.kind === 'coreBreak' || effect.kind === 'dualBreak';
-        const large = crossfire || rescue || coreBreak || effect.kind === 'supply' ||
+        const attach = effect.kind === 'attach';
+        const merge = effect.kind === 'merge';
+        const repair = effect.kind === 'repair';
+        const large = crossfire || rescue || coreBreak || attach || merge || repair || effect.kind === 'supply' ||
           effect.kind === 'break' || effect.kind === 'burst' || effect.kind === 'impact';
         if (large) {
           const span = r * (.26 + progress * .84);
@@ -486,6 +598,16 @@ export function createBattleScene(run, controls, onFrame) {
             g.lineBetween(x - size, y - size, x + size, y + size);
             g.lineBetween(x + size, y - size, x - size, y + size);
           }
+          if (attach || rescue) lockCorners(this.over, x, y, 25 + 4 * progress, CREAM, alpha * .95);
+          if (merge) {
+            arrow(g, x - 13, y - 17 - progress * 14, -Math.PI / 2, 7, CREAM, alpha * .93);
+            arrow(g, x + 13, y - 17 - progress * 14, -Math.PI / 2, 7, CREAM, alpha * .93);
+          }
+          if (repair) {
+            g.lineStyle(2.3, 0xc4f5df, alpha * .91);
+            g.lineBetween(x - 7, y, x + 7, y);
+            g.lineBetween(x, y - 7, x, y + 7);
+          }
           const count = crossfire ? 10 : 6;
           for (let i = 0; i < count; i++) {
             const angle = i * TAU / count + .14 * i + .08 * y;
@@ -500,14 +622,16 @@ export function createBattleScene(run, controls, onFrame) {
           g.lineStyle(1.5, color, alpha * .86).strokeCircle(x, y, span);
           tickRing(g, x, y, span * .8, 4, 3.4, progress * 1.12 + x, CREAM, alpha * .82);
         }
-        if (crossfire || rescue || coreBreak || effect.kind === 'break') {
-          const priority = coreBreak ? 4 : crossfire ? 3 : rescue ? 2 : 1;
+        if (crossfire || rescue || coreBreak || attach || merge || repair || effect.kind === 'break') {
+          const priority = coreBreak ? 5 : crossfire ? 4 : rescue ? 3 : effect.kind === 'break' ? 2 : 1;
           if (!callout || callout.priority <= priority) {
             callout = {
               x, y: y - (crossfire ? 39 : 33) - progress * 18,
               label: effect.kind === 'dualBreak' ? '双核击破！' : coreBreak ? '核心暴露' :
-                crossfire ? '夹击！' : rescue ? '炮车归队' : '车节脱钩',
-              color: crossfire || coreBreak ? '#ffe7a3' : rescue ? '#a6f3d5' : '#f8b0c7',
+                crossfire ? '夹击！' : rescue ? '炮车归队' : attach ? '炮车接入' :
+                  merge ? '火力强化' : repair ? '维修完毕' : '车节脱钩',
+              color: crossfire || coreBreak || merge ? '#ffe7a3' :
+                rescue || attach || repair ? '#a6f3d5' : '#f8b0c7',
               alpha: Math.min(1, alpha * 2.5), priority,
             };
           }
