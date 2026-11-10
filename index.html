@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#11191a">
+  <meta name="description" content="拖炮小队。单指驾驶装甲车队，转弯交叉齐射。">
+  <title>拖炮小队</title>
+  <script type="module" src="/src/main.js"></script>
+</head>
+<body>
+  <main class="station">
+    <aside class="station-note" aria-hidden="true">
+      <span class="station-emblem">◈</span>
+      <p>荒野战线</p>
+      <small>CONVOY OUTPOST / 01</small>
+      <span class="station-rule"></span>
+      <p class="station-instruction">沿怪群转弯<br>让炮火交叉</p>
+    </aside>
+
+    <section id="frame" class="frame" aria-label="拖炮小队游戏">
+      <div id="game" class="game" aria-hidden="true"></div>
+      <div class="screen-rim" aria-hidden="true"></div>
+      <header id="hud" class="hud" hidden>
+        <div class="hud-line">
+          <div class="op">
+            <span class="op-lamp"></span>
+            <span id="wave">第 01 段</span>
+          </div>
+          <time id="clock" class="clock">00:00</time>
+          <button id="pause" class="icon-button" type="button" aria-label="暂停">Ⅱ</button>
+        </div>
+        <div class="vehicle-status">
+          <div class="health">
+            <div class="health-copy"><span>车头</span><span id="health-value">100 / 100</span></div>
+            <div class="health-track"><i id="health-fill"></i></div>
+          </div>
+          <div class="convoy-status">
+            <div class="health-copy"><span>炮车</span><span id="cars-count">2 / 4</span></div>
+            <div id="cars" class="cars" aria-label="炮车耐久"></div>
+          </div>
+        </div>
+        <div id="boss-hud" class="boss-hud" hidden>
+          <div class="health-copy"><span>赤风守卫</span><span id="boss-state"></span></div>
+          <div class="boss-track"><i id="boss-fill"></i></div>
+        </div>
+      </header>
+
+      <div id="notice" class="notice" hidden></div>
+      <div id="controls" class="controls" hidden>
+        <p id="hint" class="hint">拖动开车，沿怪群外侧转弯</p>
+        <div id="stick" class="stick" aria-hidden="true"><div id="stick-thumb"></div></div>
+        <div class="control-copy"><span>单指拖动</span><small>WASD / 方向键</small></div>
+        <button id="volley" class="volley" type="button" aria-label="齐射">
+          <span class="volley-symbol" aria-hidden="true">⌁</span>
+          <strong>齐射</strong><small id="volley-caption">空格</small>
+        </button>
+      </div>
+
+      <div id="menu" class="screen menu">
+        <div class="menu-title">
+          <p class="eyebrow"><i></i> 装甲车队作战</p>
+          <h1>拖炮小队</h1>
+          <p class="tagline">开一个弯，打出两面火力</p>
+        </div>
+        <div class="menu-bottom">
+          <div id="record" class="record">荒野战线 · 首次出击</div>
+          <button id="start" class="primary" type="button"><strong>开始战斗</strong><span>约 4–6 分钟</span></button>
+          <button id="quick" class="secondary" type="button"><strong>快速试打</strong><span>约 90 秒</span></button>
+          <button id="help" class="text-button" type="button">操作指南</button>
+        </div>
+      </div>
+
+      <div id="modal" class="screen shade" hidden>
+        <section class="panel" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+          <p id="modal-eyebrow" class="eyebrow"></p>
+          <h2 id="modal-title"></h2>
+          <p id="modal-desc" class="panel-desc"></p>
+          <div id="modal-body" class="panel-body"></div>
+          <div id="modal-actions" class="panel-actions"></div>
+        </section>
+      </div>
+    </section>
+
+    <aside class="station-note station-note-right" aria-hidden="true">
+      <span class="station-emblem">＋</span>
+      <p>战术终端</p>
+      <small>SOLO / LOCAL</small>
+      <span class="station-rule"></span>
+      <p class="station-instruction">短车破甲<br>长车夹击</p>
+    </aside>
+  </main>
+</body>
+</html>

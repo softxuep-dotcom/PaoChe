@@ -1,0 +1,21 @@
+{
+  "name": "tow-cannon-squad",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5177 --strictPort",
+    "start": "npm run dev",
+    "build": "vite build --base ./ && node tools/pack-local.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "phaser": "4.2.1"
+  },
+  "devDependencies": {
+    "vite": "7.3.6"
+  },
+  "overrides": {
+    "rollup": "4.62.2"
+  }
+}
